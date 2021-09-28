@@ -1,0 +1,122 @@
+---
+title: "survival_analysis"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# TCGA survival analysis using Gene Expression data
+
+## Load library
+```{r}
+library('survival')
+library('survminer')
+library(dplyr)
+library(knitr) # For rendering purpose
+```
+
+## Load Gene Expression cohort data
+Load the Gene expression data. Each row corresponds to gene while each column corresponds to patients.
+```{r}
+data= read.table("GeneExpression_log2Counts_TNBC_HER2pos_ERpos_Normal_normalized.txt", sep="\t", header=T,check.names=F, stringsAsFactor=F)
+kable(data[1:3,1:4])
+```
+
+## Load sample information data
+This file contains information of each patient, 
+```{r}
+sampleinfo = read.table("sample_group_info.txt", sep="\t", header=T,check.names=F, stringsAsFactor=F)
+rownames(sampleinfo) = sampleinfo$sampleName;
+sampleinfo$patientid = substr(sampleinfo$sampleName,1, 12);
+# Print 1st sample information
+print(sampleinfo[1,])
+```
+
+### Stage summary
+```{r}
+table(sampleinfo$stageCode)
+```
+
+
+### EPHsubtype
+```{r}
+table(sampleinfo$groupName)
+```
+
+## Load Clinical Information of each patient
+```{r}
+clinical = read.table("TCGA-BRCA_clinical.csv", sep=",", header=T,check.names=F, stringsAsFactor=F)
+rownames(clinical) = clinical$submitter_id;
+print(clinical[1,])
+```
+
+
+## Map TCGA patiend id to EPH status (ERpos/TNBC/HER2pos/Normal)
+```{r}
+ephstatus = sampleinfo[colnames(data)[2:ncol(data)],"groupName"];
+names(ephstatus) = colnames(data)[2:ncol(data)];
+print(head(ephstatus))
+```
+## Map clinical data with gene expression data
+
+```{r}
+# Consider gene1
+rowno=1;
+
+# All sample names
+samplename = colnames(data)[2:ncol(data)]
+
+
+# All patient names
+patientname = sampleinfo[samplename,"patientid"];
+
+# Clinical data 
+tempclindata = clinical[,c("submitter_id","days_to_death","days_to_last_follow_up","vital_status")];
+tempclindata = tempclindata[patientname,];
+tempclindata$ephstatus = ephstatus[samplename];
+tempclindata$genexp = unlist(data[rowno,samplename]);
+
+notDead <- is.na(tempclindata$days_to_death)
+
+if (any(notDead == TRUE)) {
+       tempclindata$days_to_death[notDead] <- tempclindata[notDead, "days_to_last_follow_up"]
+}
+
+tempclindata$s <- grepl("dead", tempclindata$vital_status, ignore.case = TRUE)
+tempclindata$ephstatus <- as.factor(tempclindata$ephstatus)
+head(tempclindata)
+```
+
+
+## Fit Proportional Hazards Regression Model
+```{r}
+res.cox <- coxph(Surv(days_to_death,s) ~ ephstatus + genexp, data =  tempclindata)
+summary(res.cox)
+```
+
+## Do preprocessing
+```{r}
+newdata=data.frame(ephstatus=unique(as.character(tempclindata$ephstatus)), genexp = sapply(unique(as.character(tempclindata$ephstatus)), function(x) { filter(tempclindata, ephstatus==x) %>% select(genexp) %>% unlist %>% mean;}));
+head(newdata)
+```
+
+## Create survival curves
+```{r}
+fit <- survfit(res.cox, newdata = newdata)
+print(fit)
+```
+
+## Drawing Survival Curves Using ggplot2
+```{r}
+ggsurvplot(fit, data = newdata, conf.int = F, legend.labs=newdata$ephstatus,ggtheme = theme_minimal())
+```
+
+
+
+
+
+
+
+
